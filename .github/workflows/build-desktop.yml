@@ -1,0 +1,32 @@
+name: Build desktop app
+on:
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: Адрес сервера, например https://rewards.example.com
+        required: true
+  push:
+    tags: ['v*']
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Вшить адрес сервера
+        shell: bash
+        run: echo '{"serverUrl":"${{ github.event.inputs.server_url || vars.SERVER_URL }}"}' > desktop/config.json
+      - run: npm install
+        working-directory: desktop
+      - run: npx electron-builder --publish never
+        working-directory: desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-${{ matrix.os }}
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.dmg

@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#e0558a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="/manifest.json">
+<title>Админка</title>
+<link rel="stylesheet" href="/common.css">
+</head>
+<body>
+<main id="root"></main>
+<script src="/common.js"></script>
+<script>
+let S = null, tab = 'do', editing = null;
+const root = $('#root');
+
+async function load(silent) {
+  try {
+    const j = await call('GET', '/api/state');
+    if (j.role !== 'admin') { const e = new Error('Это ключ не админа'); e.auth = true; throw e; }
+    if (silent && S && JSON.stringify(S) === JSON.stringify(j)) return;
+    S = j; render();
+  } catch (e) {
+    if (e.auth) { try { localStorage.removeItem(KEY_STORE); } catch {} KEY = ''; return loginScreen(root, load, 'Админка'); }
+    if (!silent) toast(e.message, true);
+  }
+}
+async function act(fn, okMsg) {
+  try { const j = await fn(); S = { ...S, ...j }; render(); if (okMsg) toast(okMsg); }
+  catch (e) { toast(e.message, true); }
+}
+
+function render() {
+  const c = S.config, b = S.balances;
+  const y = document.documentElement.scrollTop;
+  root.innerHTML = `
+  <h1>Админка</h1>
+  <div class="grid2">
+    <div class="card bal cur"><div class="lbl">Моментальный</div><div class="sum ${b.current < 0 ? 'neg' : ''}" style="font-size:24px">${fmt(b.current, c.currency)}</div></div>
+    <div class="card bal sav"><div class="lbl">💎 Накопительный</div><div class="sum" style="font-size:24px">${fmt(b.savings, c.currency)}</div></div>
+  </div>
+  <div class="tabs">
+    ${[['do', 'Начислить'], ['claims', 'Заявки' + (S.claims.length ? ` (${S.claims.length})` : '')], ['hist', 'История'], ['edit', 'Правила']].map(([k, n]) =>
+      `<button class="${tab === k ? 'on' : ''}" data-tab="${k}">${n}</button>`).join('')}
+  </div>
+  <div id="pane"></div>`;
+  root.querySelectorAll('[data-tab]').forEach((el) => el.onclick = () => { tab = el.dataset.tab; editing = null; render(); });
+  const pane = $('#pane');
+
+  if (tab === 'do') {
+    const row = (a) => `<div class="item"><div class="t"><b>${esc(a.title)}${a.big ? '<span class="tag big">крутое</span>' : ''}</b>
+      ${a.big ? `<small>💎 +${fmt(a.amount * c.bigBonusMultiplier, c.currency)} на накопительный</small>` : ''}</div>
+      <span class="amt ${a.type === 'bonus' ? 'plus' : 'minus'}">${a.type === 'bonus' ? '+' : '−'}${fmt(a.amount, c.currency)}</span>
+      <button class="sm ${a.type === 'bonus' ? 'good' : 'bad'}" data-apply="${a.id}" data-name="${esc(a.title)}">${a.type === 'bonus' ? 'Бонус' : 'Штраф'}</button></div>`;
+    pane.innerHTML = `<div class="list">${S.actions.map(row).join('') || '<p class="hint">Добавь пункты во вкладке «Правила»</p>'}</div>
+      <h2>Своя сумма</h2><div class="card form">
+        <input id="adj-t" placeholder="Причина" maxlength="120">
+        <input id="adj-a" type="number" inputmode="decimal" placeholder="Сумма (минус — списать)">
+        <select id="adj-s"><option value="current">На моментальный</option><option value="savings">На накопительный</option></select>
+        <button id="adj-go">Применить</button></div>`;
+    pane.querySelectorAll('[data-apply]').forEach((el) => el.onclick = () => {
+      if (confirm(`Применить: ${el.dataset.name}?`)) act(() => call('POST', '/api/admin/apply', { actionId: +el.dataset.apply }), 'Готово');
+    });
+    $('#adj-go').onclick = () => act(() => call('POST', '/api/admin/adjust', { title: $('#adj-t').value, amount: +$('#adj-a').value, target: $('#adj-s').value }), 'Готово');
+  }
+
+  if (tab === 'claims') {
+    pane.innerHTML = `<div class="list">${S.claims.map((x) => `<div class="item"><div class="t"><b>${esc(x.title)}</b>
+      <small>${when(x.ts)}${x.note ? ' · ' + esc(x.note) : ''}</small></div><span class="amt plus">+${fmt(x.amount, c.currency)}</span>
+      <button class="sm good" data-ok="${x.id}">✓</button><button class="sm ghost" data-no="${x.id}">✕</button></div>`).join('') || '<p class="hint">Новых заявок нет</p>'}</div>`;
+    pane.querySelectorAll('[data-ok]').forEach((el) => el.onclick = () => act(() => call('POST', `/api/admin/claims/${el.dataset.ok}/approve`, {}), 'Начислено'));
+    pane.querySelectorAll('[data-no]').forEach((el) => el.onclick = () => act(() => call('POST', `/api/admin/claims/${el.dataset.no}/reject`, {}), 'Отклонено'));
+  }
+
+  if (tab === 'hist') {
+    pane.innerHTML = `<div class="list">${S.tx.map((t) => txRow(t, c.currency,
+      !t.reverted && !t.revertOf ? `<button class="sm ghost" data-rev="${t.id}" title="Отменить">↩</button>` : '')).join('')}</div>`;
+    pane.querySelectorAll('[data-rev]').forEach((el) => el.onclick = () => {
+      if (confirm('Отменить эту операцию?')) act(() => call('POST', '/api/admin/revert', { txId: +el.dataset.rev }), 'Отменено');
+    });
+  }
+
+  if (tab === 'edit') {
+    const e = editing || { title: '', type: 'bonus', amount: '', big: false };
+    pane.innerHTML = `
+    <h2 style="margin-top:0">Настройки</h2>
+    <div class="card form">
+      <label>Название программы</label><input id="c-title" value="${esc(c.title)}">
+      <div class="grid2"><div><label>Валюта</label><input id="c-cur" value="${esc(c.currency)}"></div>
+      <div><label>Ежемесячно</label><input id="c-month" type="number" value="${c.monthlyAmount}"></div></div>
+      <div class="grid2"><div><label>Крутое: накопительный ×</label><input id="c-big" type="number" step="0.05" value="${c.bigBonusMultiplier}"></div>
+      <div><label>Перевод её рукой ×</label><input id="c-tr" type="number" step="0.05" value="${c.transferMultiplier}"></div></div>
+      <label>Порог «крупной покупки»</label><input id="c-thr" type="number" value="${c.bigPurchaseThreshold}">
+      <button id="c-save">Сохранить</button></div>
+
+    <h2>${editing && editing.id ? 'Изменить пункт' : 'Новый пункт'}</h2>
+    <div class="card form">
+      <input id="a-t" placeholder="Название" value="${esc(e.title)}" maxlength="100">
+      <div class="grid2"><select id="a-type"><option value="bonus" ${e.type === 'bonus' ? 'selected' : ''}>Бонус</option><option value="penalty" ${e.type === 'penalty' ? 'selected' : ''}>Штраф</option></select>
+      <input id="a-amt" type="number" inputmode="decimal" placeholder="Сумма" value="${e.amount}"></div>
+      <label class="check"><input id="a-big" type="checkbox" ${e.big ? 'checked' : ''}> Крутое (копится ещё и на накопительный)</label>
+      <div class="grid2"><button id="a-save">${editing && editing.id ? 'Сохранить' : 'Добавить'}</button>${editing ? '<button class="ghost" id="a-cancel">Отмена</button>' : ''}</div></div>
+
+    <h2>Пункты</h2>
+    <div class="list">${S.actions.map((a) => `<div class="item"><div class="t"><b>${esc(a.title)}${a.big ? '<span class="tag big">крутое</span>' : ''}</b>
+      <small>${a.type === 'bonus' ? 'Бонус' : 'Штраф'} · ${fmt(a.amount, c.currency)}</small></div>
+      <button class="sm ghost" data-edit="${a.id}">✎</button><button class="sm ghost" data-del="${a.id}">🗑</button></div>`).join('')}</div>
+    <p style="margin-top:30px"><button class="ghost sm" id="logout">Выйти</button></p>`;
+
+    $('#c-save').onclick = () => act(() => call('PUT', '/api/admin/config', {
+      title: $('#c-title').value, currency: $('#c-cur').value, monthlyAmount: $('#c-month').value,
+      bigBonusMultiplier: $('#c-big').value, transferMultiplier: $('#c-tr').value, bigPurchaseThreshold: $('#c-thr').value }), 'Сохранено');
+    $('#a-save').onclick = () => {
+      const body = { title: $('#a-t').value, type: $('#a-type').value, amount: +$('#a-amt').value, big: $('#a-big').checked };
+      const id = editing && editing.id; editing = null;
+      act(() => id ? call('PUT', `/api/admin/actions/${id}`, body) : call('POST', '/api/admin/actions', body), 'Сохранено');
+    };
+    if ($('#a-cancel')) $('#a-cancel').onclick = () => { editing = null; render(); };
+    pane.querySelectorAll('[data-edit]').forEach((el) => el.onclick = () => { editing = S.actions.find((a) => a.id === +el.dataset.edit); render(); scrollTo(0, 400); });
+    pane.querySelectorAll('[data-del]').forEach((el) => el.onclick = () => {
+      if (confirm('Удалить пункт?')) act(() => call('DELETE', `/api/admin/actions/${el.dataset.del}`), 'Удалено');
+    });
+    $('#logout').onclick = logout;
+  }
+  document.documentElement.scrollTop = y;
+}
+
+load();
+setInterval(() => load(true), 30000);
+</script>
+</body>
+</html>

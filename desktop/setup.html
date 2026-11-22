@@ -1,0 +1,16 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Настройка</title>
+<style>body{font:16px system-ui;background:#fbf6f1;color:#2b2230;display:grid;place-items:center;height:100vh;margin:0}
+.c{background:#fff;padding:28px;border-radius:18px;width:min(420px,90vw);box-shadow:0 6px 24px rgba(80,40,70,.1)}
+input{width:100%;padding:10px 12px;border-radius:12px;border:1px solid #eee3e8;font:inherit;box-sizing:border-box}
+button{margin-top:12px;width:100%;padding:11px;border:0;border-radius:12px;background:#e0558a;color:#fff;font:inherit;font-weight:600;cursor:pointer}
+.e{color:#d6455d;font-size:14px;min-height:1.2em}</style></head><body><div class="c">
+<h2 style="margin-top:0">Адрес сервера</h2><p id="m" style="color:#7d7184">Введите адрес, который прислал админ.</p>
+<input id="u" placeholder="https://example.com"><p class="e" id="e"></p><button id="b">Сохранить</button></div>
+<script>
+const q = new URLSearchParams(location.search);
+if (q.get('url')) u.value = q.get('url');
+if (q.get('error')) m.textContent = 'Не удалось подключиться (' + q.get('error') + '). Проверьте интернет или адрес.';
+b.onclick = async () => { try { await window.desktop.saveUrl(u.value); } catch (x) { e.textContent = x.message.replace(/^.*Error: /, ''); } };
+</script></body></html>

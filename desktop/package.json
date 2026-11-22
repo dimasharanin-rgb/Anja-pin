@@ -1,0 +1,25 @@
+{
+  "name": "poosheryenia-i-nakazaniya",
+  "productName": "Поощрения и наказания",
+  "version": "1.0.0",
+  "description": "Десктоп-клиент «Поощрения и наказания»",
+  "main": "main.js",
+  "author": "Anja-pin",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "app.anjapin.rewards",
+    "productName": "Поощрения и наказания",
+    "files": ["main.js", "preload.js", "setup.html", "config.json", "package.json"],
+    "win": { "target": "nsis" },
+    "mac": { "target": "dmg", "category": "public.app-category.lifestyle" },
+    "linux": { "target": "AppImage" },
+    "nsis": { "oneClick": true, "perMachine": false }
+  }
+}

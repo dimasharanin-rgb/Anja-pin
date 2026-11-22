@@ -1,0 +1,3 @@
+{ "name": "Админка: Поощрения и наказания", "short_name": "Админка", "start_url": "/admin", "display": "standalone",
+  "background_color": "#fbf6f1", "theme_color": "#e0558a",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }] }

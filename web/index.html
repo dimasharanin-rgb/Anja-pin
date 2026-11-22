@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Поощрения и наказания</title>
+<link rel="stylesheet" href="/common.css">
+</head>
+<body>
+<main id="root"></main>
+<script src="/common.js"></script>
+<script>
+let S = null, tab = 'home';
+const root = $('#root');
+
+async function load(silent) {
+  try {
+    const j = await call('GET', '/api/state');
+    if (silent && S && JSON.stringify(S) === JSON.stringify(j)) return;
+    const prev = S; S = j; render(prev);
+  } catch (e) {
+    if (e.auth) return loginScreen(root, load, 'Поощрения и наказания');
+    if (!silent) toast(e.message, true);
+  }
+}
+async function act(fn, okMsg) {
+  try { const j = await fn(); S = j; render(); if (okMsg) toast(okMsg); }
+  catch (e) { toast(e.message, true); }
+}
+
+function render(prev) {
+  const c = S.config, b = S.balances;
+  const canBig = (v) => v >= c.bigPurchaseThreshold;
+  const pending = new Set(S.claims.filter((x) => x.status === 'pending').map((x) => x.actionId));
+  const bonuses = S.actions.filter((a) => a.type === 'bonus');
+  const penalties = S.actions.filter((a) => a.type === 'penalty');
+  const pop = (k) => prev && prev.balances[k] !== b[k] ? 'pop' : '';
+
+  root.innerHTML = `
+  <h1>${esc(c.title)}</h1>
+  <div class="row">
+    <div class="card bal cur ${pop('current')}"><div class="lbl">Моментальный счёт</div>
+      <div class="sum ${b.current < 0 ? 'neg' : ''}">${fmt(b.current, c.currency)}</div><small>Тратится на что угодно</small></div>
+    <div class="card bal sav ${pop('savings')}"><div class="lbl">💎 Крупно-накопительный</div>
+      <div class="sum">${fmt(b.savings, c.currency)}</div><small>Только на покупки от ${fmt(c.bigPurchaseThreshold, c.currency)}</small></div>
+  </div>
+
+  <div class="tabs">
+    ${[['home', 'Что можно'], ['wallet', 'Кошелёк'], ['hist', 'История']].map(([k, n]) =>
+      `<button class="${tab === k ? 'on' : ''}" data-tab="${k}">${n}</button>`).join('')}
+  </div>
+  <div id="pane"></div>`;
+
+  root.querySelectorAll('[data-tab]').forEach((el) => el.onclick = () => { tab = el.dataset.tab; render(); });
+  const pane = $('#pane');
+
+  if (tab === 'home') {
+    const row = (a) => `<div class="item"><div class="t"><b>${esc(a.title)}${a.big ? '<span class="tag big">крутое · 💎×' + c.bigBonusMultiplier + '</span>' : ''}</b></div>
+      <span class="amt ${a.type === 'bonus' ? 'plus' : 'minus'}">${a.type === 'bonus' ? '+' : '−'}${fmt(a.amount, c.currency)}</span>
+      ${a.type === 'bonus' ? `<button class="sm ghost" data-claim="${a.id}" ${pending.has(a.id) ? 'disabled' : ''}>${pending.has(a.id) ? 'ждём ✓' : 'Я сделала!'}</button>` : ''}</div>`;
+    pane.innerHTML = `<h2>Бонусы</h2><div class="list">${bonuses.map(row).join('') || '<p class="hint">Пока пусто</p>'}</div>
+      <h2>Минусы</h2><div class="list">${penalties.map(row).join('') || '<p class="hint">Пока пусто</p>'}</div>
+      ${S.claims.length ? `<h2>Мои заявки</h2><div class="list">${S.claims.slice(0, 6).map((x) =>
+        `<div class="item"><div class="t"><b>${esc(x.title)}</b><small>${when(x.ts)}</small></div>
+         <span class="tag">${{ pending: 'на проверке', approved: 'принято', rejected: 'отклонено' }[x.status]}</span></div>`).join('')}</div>` : ''}`;
+    pane.querySelectorAll('[data-claim]').forEach((el) => el.onclick = () => {
+      const note = prompt('Комментарий (необязательно)') ?? null;
+      if (note === null) return;
+      act(() => call('POST', '/api/claim', { actionId: +el.dataset.claim, note }), 'Заявка отправлена');
+    });
+  }
+
+  if (tab === 'wallet') {
+    pane.innerHTML = `
+    <div class="card"><h2 style="margin-top:0">Отложить на крупное</h2>
+      <p class="hint">Переведи с моментального в накопительный — и получишь <b>×${c.transferMultiplier}</b>. Обратно перевести нельзя.</p>
+      <label>Сколько перевести</label><input id="tr" type="number" min="1" inputmode="decimal" placeholder="500">
+      <p id="trp" class="hint"></p><button id="trgo">Отложить</button></div>
+    <div class="card" style="margin-top:14px"><h2 style="margin-top:0">Потратить</h2>
+      <div class="form">
+        <label>На что</label><input id="sp-t" maxlength="120" placeholder="Например, кроссовки">
+        <label>Сумма</label><input id="sp-a" type="number" min="1" inputmode="decimal">
+        <label>Откуда</label><select id="sp-s"><option value="current">Моментальный</option><option value="savings">💎 Накопительный</option></select>
+        <p id="sp-h" class="hint"></p><button id="spgo">Потратить</button></div></div>`;
+    const tr = $('#tr'), trp = $('#trp');
+    tr.oninput = () => { const v = +tr.value; trp.textContent = v > 0 ? `Придёт на накопительный: ${fmt(v * c.transferMultiplier, c.currency)}` : ''; };
+    $('#trgo').onclick = () => act(() => call('POST', '/api/transfer', { amount: +tr.value }), 'Отложено 💎');
+    const hint = () => {
+      const a = +$('#sp-a').value, s = $('#sp-s').value;
+      $('#sp-h').textContent = s === 'savings' && a && !canBig(a) ? `С накопительного — только от ${fmt(c.bigPurchaseThreshold, c.currency)}` : '';
+    };
+    $('#sp-a').oninput = hint; $('#sp-s').onchange = hint;
+    $('#spgo').onclick = () => act(() => call('POST', '/api/spend', { title: $('#sp-t').value, amount: +$('#sp-a').value, source: $('#sp-s').value }), 'Готово 🛍️');
+  }
+
+  if (tab === 'hist') {
+    pane.innerHTML = `<div class="list">${S.tx.map((t) => txRow(t, c.currency)).join('') || '<p class="hint">Пока ничего нет</p>'}</div>`;
+  }
+}
+
+load();
+setInterval(() => load(true), 20000);
+document.addEventListener('visibilitychange', () => !document.hidden && load(true));
+</script>
+</body>
+</html>
